@@ -48,7 +48,7 @@ knitr::opts_chunk$set(cache=TRUE)  # cache the results for quick compiling
 ## Download and clean all required data
 
 ```{r, message=F, warning=F}
-#aquire census tracts
+#acquire census tracts
 
 census_api_key("a7f41abd86b507f92feb140131bdcbd24b0d9170", install = TRUE, overwrite = TRUE)
 readRenviron("~/.Renviron")  
@@ -66,14 +66,14 @@ tracts_monroe <- get_acs(
 )
 
 
-rochester_city <- places(state = "NY", cb = TRUE) %>% #tigris places command gets city boundary
+rochester_city <- places(state = "NY", cb = TRUE) %>% #tigris places command gets city boundary 
   filter(NAME == "Rochester")
 tracts_rochester <- tracts_monroe[st_within(tracts_monroe, rochester_city, sparse = FALSE), ] #removes tracts not within
 
 ```
 ```{r, results='asis'}
 
-map <- ggplot(tracts_rochester) +
+map <- ggplot(tracts_rochester) + 
   geom_sf(aes(fill = estimate), color = NA) +
   scale_fill_viridis_c(
     option = "plasma",
@@ -87,7 +87,7 @@ map <- ggplot(tracts_rochester) +
   theme_minimal()
 map
 ```
-
+ 
 
 
 
