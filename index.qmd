@@ -5,7 +5,7 @@ subtitle: Quantifying the Surface Urban Heat Island (SUHI) effect in Rochester a
 date: today
 date-format: long
 format:
-  pdf:
+  html:
     toc: TRUE
     code-fold: TRUE
 ---
