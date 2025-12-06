@@ -4,57 +4,65 @@ author: Damien Hotte
 subtitle: Quantifying the Surface Urban Heat Island (SUHI) effect in Rochester and exploring its relationship with socioeconomic features.
 date: today
 date-format: long
+format:
+  html:
+    toc: TRUE
+    code-fold: TRUE
 ---
 
 # Introduction
 
-\[\~ 200 words\]
-
 The Urban Heat Island (UHI) effect is a global phenomenon in which urban areas experience significantly higher Land Surface Temperatures (LST) than their surrounding rural counterparts. This temperature disparity is caused primarily by the dense concentration of buildings, roads, and other impervious surfaces that absorb and retain heat, along with a decrease of vegetation and green spaces that would otherwise provide natural cooling, reduced by urban expansion.
 
-In cities like Rochester, New York, heat patterns do not impact all communities equally. Variations in land use, socio-economic conditions, and access to vegetation can create localized “hot spots” that exacerbate health and environmental inequities. Prolonged exposure to elevated temperatures can increase energy demands, worsen air quality, and put vulnerable populations at risk. This project seeks to examine the relationship between socio-economic and land-use patterns and disparities in heat exposure across Rochester. 
+In cities like Rochester, New York, heat patterns do not impact all communities equally. Variations in land use, socio-economic conditions, and access to vegetation can create localized “hot spots” that exacerbate health and environmental inequities. Prolonged exposure to elevated temperatures can increase energy demands, worsen air quality, and put vulnerable populations at risk. This project seeks to examine the relationship between socio-economic and land-use patterns and disparities in heat exposure across Rochester.
 
-Specifically, it aims to explore how differences in vegetative cover mediate these temperature variations and whether neighborhoods with lower income or less green space experience greater heat stress.By analyzing spatial data on LST, land use, and vegetation distribution, this study will shed light on the socio-environmental dynamics of urban heat and contribute to more equitable strategies for climate resilience.
+To accurately quantify the role of green space in mediating the Urban Heat Island effect, this project utilizes the Normalized Difference Vegetation Index (NDVI). NDVI is a critical remote sensing metric that measures the health and density of green vegetation . This index is calculated from the Near-Infrared (NIR) and Red light bands of the Landsat 9 imagery. Healthy vegetation strongly reflects NIR light and absorbs Red light, resulting in high positive NDVI values (close to +1), while impervious surfaces (like roads and buildings) have low or negative values.
 
-Note: Changes from brainstorm- narrowing to just focus on Rochester instead of including buffalo, in order to better focus on the comparison of land use and poverty’s impact on green space in Rochester.
-
+Specifically, it aims to explore how differences in vegetative cover mediate these temperature variations and whether neighborhoods with lower income or less green space experience greater heat stress. By analyzing spatial data on LST, land use, and vegetation distribution, this study will shed light on the socio-environmental dynamics of urban heat and contribute to more equitable strategies for climate resilience.
 
 # Materials and methods
 
-\[\~ 200 words\]
+### **Study Area and Data Acquisition**
 
-Narrative: Clear narrative description of the data sources and methods. Includes data from at least two sources that were integrated / merged in R.
+The study area was defined by the **Census tracts of Rochester, Monroe County, New York (NY)**, acquired using the `tidycensus` R package. This vector boundary file was re-projected to match the Coordinate Reference System (CRS) of the Landsat imagery. The raw remote sensing data was obtained from a **Landsat 9 Level-1 scene (Path 016, Row 030)**, captured on **July 07, 2025**. The analysis utilized Band 4 (Red) and Band 5 (Near-Infrared, NIR) for the calculation of the Normalized Difference Vegetation Index (NDVI), and Band 10 (Thermal Infrared, TIRS) for the calculation of Land Surface Temperature (LST) as well as the Metadata text file containing constants for TIRS band needed for LST calculation.
 
-Code: The code associated with the project is well organized and easy to follow. Demonstrates mastery of R graphics and functions.
+## 1 Data Import & Cleanup
 
-Data: The underlying data are publicly accessible via the web and downloaded/accessed within the Rmd script. If you want to use your own data, you must make it available on a website (e.g. Figshare) so that others are able to re-run your code.
+### 1.1 Load Libraries
 
-
-
-```{r, message=F, warning=F}
-library(tidyverse)
-library(leaflet)
-library(kableExtra)
-library(htmlwidgets)
-library(widgetframe)
-library(tidycensus)
-library(sf)
-library(ggplot2)
-library(tigris)
+```{r load-libraries,message=FALSE,warning=FALSE,echo=TRUE}
+library(tidyverse) 
+library(leaflet) #interactive map
+library(kableExtra) #tabulating
+library(htmlwidgets) #leaflet
+library(widgetframe) #leaflet
+library(tidycensus) #census data
+library(sf) #used with vector data
+library(ggplot2) #scatterplots
+library(tigris) #downloading city boundary
+library(terra) #raster operations
+library(dplyr) #data manipulation
+library(purrr) # map()
+library(scales) #$ sign for leaflet
 knitr::opts_chunk$set(widgetframe_widgets_dir = 'widgets' ) 
-knitr::opts_chunk$set(cache=TRUE)  # cache the results for quick compiling
 ```
 
-## Download and clean all required data
+### 1.2 Import Census Data
 
-```{r, message=F, warning=F}
-#aquire census tracts
+```{r census-api, output=FALSE, echo=TRUE, cache=TRUE}
+#Pull census data with API key
 
 census_api_key("a7f41abd86b507f92feb140131bdcbd24b0d9170", install = TRUE, overwrite = TRUE)
 readRenviron("~/.Renviron")  
+```
 
-# Set the variable FOR median household income
-variables <- c(median_income = "B19013_001")
+### 1.3 Census Data Cleanup
+
+Before analyzing environmental factors, the study area must be defined and socioeconomic data needs to be acquired. This section uses the `tidycensus` package to pull the **5-year ACS estimates** for Median Household Income at the census tract level for Monroe County, NY. Then this spatial dataset is redefined using `tigris` and `sf` to include only those tracts within the official City of Rochester boundary using the `st_within` function.
+
+```{r census-clean, output=FALSE, warning= FALSE, cache =TRUE}
+#Census data cleanup
+variables <- c(median_income = "B19013_001") # Set the variable FOR median household income
 
 # Get data for Monroe County
 tracts_monroe <- get_acs(
@@ -64,43 +72,353 @@ tracts_monroe <- get_acs(
   county = "Monroe",
   geometry = TRUE
 )
-
-
 rochester_city <- places(state = "NY", cb = TRUE) %>% #tigris places command gets city boundary
   filter(NAME == "Rochester")
 tracts_rochester <- tracts_monroe[st_within(tracts_monroe, rochester_city, sparse = FALSE), ] #removes tracts not within
-
 ```
-```{r, results='asis'}
 
-map <- ggplot(tracts_rochester) +
-  geom_sf(aes(fill = estimate), color = NA) +
-  scale_fill_viridis_c(
-    option = "plasma",
-    name = "Median Income ($)"
-  ) +
+### 1.4 Import Landsat data
+
+This section prepares the raw Landsat 9 OLI/TIRS data for analysis. The L1TP Thermal (Band 10), Red (Band 4), and Near-Infrared (Band 5) bands are imported. All raster bands were first projected into a common CRS, **UTM Zone 18N (WGS84)**, consistent with the standard Level-1 product projection. To isolate the study, the complete Landsat scene was first **cropped** to the boundary of the city of Rochester and **masked** using the `terra::crop()` and `terra::mask()` functions, respectively.
+
+```{r import-landsat}
+
+#07/11/2025 landsat rasters
+
+b4_remote <- rast("data/LC08_L1TP_016030_20250702_20250711_02_T1_B4.TIF") # Red Band: 4
+b5_remote <- rast("data/LC08_L1TP_016030_20250702_20250711_02_T1_B5.TIF") # NIR Band: 5
+b10_remote <- rast("data/LC08_L1TP_016030_20250702_20250711_02_T1_B10.TIF") # Thermal Band: 10
+
+# ROC tracts projected to match the raster's CRS
+rochester_prj <- project(vect(tracts_rochester), crs(b4_remote))
+
+# Crop and mask 3 bands to the study area extent to make raster calculations more efficient
+b4_crop <- crop(b4_remote, rochester_prj) %>% mask(rochester_prj)
+b5_crop <- crop(b5_remote, rochester_prj) %>% mask(rochester_prj)
+b10_crop <- crop(b10_remote, rochester_prj) %>% mask(rochester_prj)
+```
+
+## Data Analysis
+
+### **Land Surface Metric Calculation**
+
+Two key surface metrics were calculated for the study area:
+
+1.  **Normalized Difference Vegetation Index (NDVI):** A proxy for surface vegetation cover, calculated using the values from the Red and NIR bands. Healthy vegetation strongly reflects NIR light and absorbs Red light, resulting in high positive NDVI values (close to +1), while impervious surfaces (like roads and buildings) have low or negative values.
+2.  **Land Surface Temperature (LST):** A proxy for the surface urban heat island effect, derived from the Thermal Infrared Band 10. The process involved three steps: conversion of Digital Numbers (DN) to TOA Radiance, conversion to Brightness Temperature in Kelvin, and finally converted to Celsius, using sensor-specific constants from the MTL file.
+
+### Land Surface Analysis: NDVI
+
+```{r ndvi, warning=FALSE, cache=FALSE, output=FALSE}
+# Calculate NDVI, equation: (NIR - Red) / (NIR + Red)
+NDVI <- (b5_crop - b4_crop) / (b5_crop + b4_crop)
+# Rename the raster layer for clarity
+names(NDVI) <- "NDVI" #rename variable for tabulating
+```
+
+### Land Surface Analysis: LST
+
+```{r lst, warning=FALSE, cache=FALSE}
+# Define Landsat 9 Level 1 Thermal Constants for B10
+
+ML_B10 <- 0.00033420 #RADIANCE_MULT_BAND_10
+AL_B10 <- 0.10000 # RADIANCE_ADD_BAND_10
+K1_B10 <- 774.8853 # K1_CONSTANT_BAND_10
+K2_B10 <- 1321.0789 # K2_CONSTANT_BAND_10
+
+# Calculate TOA Radiance
+# equation: L_lambda = (ML * Qcal) + AL
+lst_radiance <- (b10_crop * ML_B10) + AL_B10
+
+# Calculate TOA Brightness Temperature (T_B) in Kelvin (K)
+# Equation: T_B = K2 / (ln(K1 / L_lambda) + 1)
+lst_kelvin <- K2_B10 / log((K1_B10 / lst_radiance) + 1)
+
+# Convert Kelvin (K) to Celsius (°C) ---
+lst_celsius <- (lst_kelvin - 273.15)
+
+# Rename the raster layer for clarity
+names(lst_celsius) <- "LST_C"
+```
+
+# Output LST & NDVI rasters of Rochester, NY
+
+```{r}
+# Plot NDVI layer
+plot(NDVI, main = "Normalized Difference Vegetation Index (NDVI)")
+plot(rochester_prj, add = TRUE, border = "gray", lwd = 0.5)
+
+# Plot LST layer
+plot(lst_celsius, main = "Land Surface Temperature Proxy (°C)")
+plot(rochester_prj, add = TRUE, border = "gray", lwd = 0.5)
+```
+
+### Zonal Statistics
+
+Zonal statistics were employed to summarize the continuous LST and NDVI raster data within the discrete boundaries of the Census tracts. The **mean** value for both the LST ($LST_C$) and the NDVI was extracted for each polygon using the `terra::extract()` function. The resulting mean LST and NDVI values were then joined back to the spatial Census tract layer using the unique **`GEOID`** as the common identifier.
+
+```{r zonal-stats, warning=FALSE}
+# Combine LST and NDVI
+raster_stack <- c(NDVI, lst_celsius)
+
+# Crop and mask the raster stack to geometry of the Census tracts
+raster_cropped <- crop(raster_stack, rochester_prj)
+raster_final <- mask(raster_cropped, rochester_prj)
+
+# Convert the sf object to a SpatVector object
+tracts_spat <- vect(tracts_rochester)
+
+# Extract the mean of LST and NDVI for each tract
+zonal_stats <- terra::extract(
+  x = raster_final, # Raster stack
+  y = tracts_spat, # Tract polygons
+  fun = mean, # Calculate the mean value
+  na.rm = TRUE,
+  ID = TRUE # Keep the tract ID for future joining
+)
+
+# Add a row identifier to tracts_rochester to match the zonal_stats data frame
+tracts_rochester <- tracts_rochester |>
+  dplyr::mutate(ID = 1:dplyr::n()) # Create an ID to match the zonal_stats table
+
+# Join the new LST and NDVI mean values to the spatial data frame
+tracts_final <- tracts_rochester |>
+  dplyr::left_join(zonal_stats, by = "ID") |>
+  # Select the required columns and clean up - CORRECTED COLUMN NAMES HERE
+  dplyr::select(GEOID, NAME, estimate, moe, LST_C, NDVI)
+```
+
+# Resulting Figure: Interactive Leaflet Map
+
+This interactive map provides a multi-layer visual representation of the final aggregated data. By allowing users to toggle between the Median Income, Median LST, and Mean NDVI polygon layers, the map provides a visual comparison of the spatial overlap between socioeconomic vulnerability and environmental exposure, pinpointing areas for targeted mitigation efforts.
+
+```{r leaflet-map-final, message=FALSE, warning=FALSE}
+
+# Reprojection 
+# Tracts set to EPSG:4326 for Leaflet
+tracts_leaflet <- st_transform(tracts_final, crs = 4326)
+
+# Define Color Palettes for 3 variables
+
+# Income Palette (High is darker)
+income_pal <- colorNumeric(
+  palette = "plasma", 
+  domain = tracts_leaflet$estimate, 
+  reverse = TRUE
+)
+
+# LST Palette (High temp is bright yellow/white)
+lst_pal <- colorNumeric(
+  palette = "magma", 
+  domain = tracts_leaflet$LST_C,
+  reverse = FALSE
+)
+
+# NDVI Palette (High vegetation is bright yellow/green)
+ndvi_pal <- colorNumeric(
+  palette = "viridis", 
+  domain = tracts_leaflet$NDVI,
+  reverse = FALSE
+)
+
+# Build the Interactive Map 
+
+#call data & set base map
+leaflet(data = tracts_leaflet) %>%
+  addProviderTiles(providers$CartoDB.PositronNoLabels, group = "Base Map") %>%
+  
+  # Add LST Layer & legend
+  addPolygons(
+    fillColor = ~lst_pal(LST_C),
+    weight = 1, opacity = 1, color = "black", fillOpacity = 0.7, #set weight val & opacity 
+    group = "Mean LST (°C)", 
+    popup = ~paste0("<b>Mean LST: </b>", round(LST_C, 2), "°C") #clickable value produced 
+  ) %>%
+  addLegend(
+    pal = lst_pal, values = ~LST_C, title = "Mean LST (°C)",#call palette, set val, and label 
+    position = "bottomleft", # Set location
+    group = "Mean LST (°C)"
+  ) %>%
+
+  # NDVI Layer 
+  addPolygons( #follows same steps as LST
+    fillColor = ~ndvi_pal(NDVI),
+    weight = 1, opacity = 1, color = "black", fillOpacity = 0.7,
+    group = "Mean NDVI", 
+    popup = ~paste0("<b>Mean NDVI: </b>", round(NDVI, 4))
+  ) %>%
+  addLegend(
+    pal = ndvi_pal, values = ~NDVI, title = "Mean NDVI",
+    position = "bottomleft", # stacks on LST legend
+    group = "Mean NDVI"
+  ) %>%
+
+  # Income Layer
+  addPolygons( #same format as before
+    fillColor = ~income_pal(estimate),
+    weight = 1, opacity = 1, color = "black", fillOpacity = 0.7,
+    group = "Median Income ($)", 
+    popup = ~paste0("<b>Median Income: </b>", scales::dollar(estimate))
+  ) %>%
+  addLegend(
+    pal = income_pal, values = ~estimate, title = "Median Income ($)",
+    position = "bottomright", #right side under widget
+    labels = scales::dollar,
+    group = "Median Income ($)"
+  ) %>%
+
+  # Layer Control Widget
+  addLayersControl(
+    overlayGroups = c("Median Income ($)", 
+                      "Mean LST (°C)", 
+                      "Mean NDVI"),
+    options = layersControlOptions(collapsed = FALSE) #false for ease
+  )
+```
+
+## Correlation Analysis
+
+```{r correlation}
+# Perform correlation function on Mean LST and Median Household Income
+cor_lst_income <- cor(
+  tracts_final$LST_C, 
+  tracts_final$estimate, 
+  use = "complete.obs"
+)
+
+# Perform correlation function on Mean NDVI and Median Household Income
+cor_ndvi_income <- cor(
+  tracts_final$NDVI, 
+  tracts_final$estimate, 
+  use = "complete.obs"
+)
+
+cat("Pearson Correlation (LST vs. Income):", round(cor_lst_income, 3), "\n")
+cat("Pearson Correlation (NDVI vs. Income):", round(cor_ndvi_income, 3), "\n")
+```
+
+The correlation results indicate a very weak linear relationship between the variables. The negative correlation between Median LST and Income ($-0.102$) suggests that higher-income tracts are slightly cooler, supporting the environmental inequity hypothesis. The weak positive correlation between NDVI and Income ($0.166$) suggests that while higher income is associated with more green space, the relationship is loose, indicating that factors beyond income primarily drive vegetation patterns in Rochester.
+
+## Scatterplots: LST & NDVI vs. Income
+
+```{r scatter-ndvi, warning=FALSE}
+# Scatterplot showing the relationship between LST and Income
+scatter_ndvi_income_plot <- ggplot(tracts_final, aes(x = estimate, y = NDVI)) + 
+  geom_point(aes(color = NDVI), alpha = 0.7) + #color scale based on aggregation for leaflet map
+  geom_smooth(method = "lm", color = "red", linewidth = 1) + #linear model
+  scale_x_continuous(labels = scales::dollar) + 
+  scale_color_viridis_c(option = "viridis", direction = -1, guide = "none") +
   labs(
-    title = "Median Household Income by Census Tract",
-    subtitle = "Rochester, NY (ACS Data)",
-    caption = "Source: U.S. Census Bureau via tidycensus"
+    title = "Mean NDVI Proxy vs. Median Household Income",
+    subtitle = paste0("Correlation: ", round(cor_ndvi_income, 3)),#show correlation here as well
+    x = "Median Household Income ($)",
+    y = "Mean NDVI"
   ) +
   theme_minimal()
-map
 ```
 
+```{r scatter-lst}
+# Scatterplot showing the relationship between LST and Income
+scatter_lst_income_plot <- ggplot(tracts_final, aes(x = estimate, y = LST_C)) + 
+  geom_point(aes(color = LST_C), alpha = 0.7) + #color scale based on aggregation for leaflet map
+  geom_smooth(method = "lm", color = "red", linewidth = 1) + #linear model
+  scale_x_continuous(labels = scales::dollar) + 
+  scale_color_viridis_c(option = "magma", direction = -1, guide = "none") +
+  labs(
+    title = "Mean LST Proxy vs. Median Household Income",
+    subtitle = paste0("Correlation: ", round(cor_lst_income, 3)),#show correlation here as well
+    x = "Median Household Income ($)",
+    y = "Mean LST (°C)"
+  ) +
+  theme_minimal()
+```
 
+```{r scatter-plot, warning=FALSE}
+scatter_ndvi_income_plot
+scatter_lst_income_plot
 
+```
+
+### Residuals Analysis
+
+```{r residuals-calc}
+# Filter out all rows where LST_C NA or estimate
+tracts_clean <- tracts_final %>%
+  dplyr::filter(!is.na(LST_C) & !is.na(estimate))
+
+# The clean df has 77 rows. The model will be fit on those.
+lst_income_model <- lm(LST_C ~ estimate, data = tracts_clean)
+
+# The residuals have 77 values to match the size of tracts_clean
+tracts_clean <- tracts_clean %>%
+  dplyr::mutate(
+    lst_residuals = residuals(lst_income_model)
+  )
+
+# Replace the tracts_final object with the clean data
+tracts_final <- tracts_clean
+
+# Check the range residuals 
+summary(tracts_final$lst_residuals)
+```
+
+### Residuals Map
+
+The residuals calculated represent the unmodeled variation in LST after accounting for Income. Tracts with high positive residuals are significantly hotter than predicted by income alone, while tracts with high negative residuals are significantly cooler. These residuals are crucial for identifying tracts that deviate most from the expected relationship, often highlighting the impact of micro-climate factors such as water bodies or industrial heat sources.
+
+```{r residuals-map}
+map_residuals <- ggplot(tracts_clean) +
+  geom_sf(aes(fill = lst_residuals), color = NA) +
+  scale_fill_gradient2(
+    low = "blue", 
+    mid = "white", 
+    high = "red",
+    midpoint = 0,
+    name = "LST Residuals (°C)"
+  ) +
+  labs(
+    title = "Residuals of LST vs. Income Model",
+    subtitle = "Areas Hotter (Red) or Cooler (Blue) than Predicted by Income",
+    caption = "Residuals are the difference between Actual LST and LST Predicted by Income"
+  ) +
+  theme_minimal()
+map_residuals
+```
 
 # Results
 
-\[\~200 words\]
+The Zonal Statistics analysis provided a quantitative summary of the surface metrics for the Census tracts. The 'leaflet' map showed a clear range of thermal exposure, with the highest LST values concentrated in the urban core and industrial zones, indicating a a slight Surface Urban Heat Island (SUHI) effect. As well, the map showed the lowest vegetation cover in these same impervious areas.
+
+The key statistical relationships, derived from the correlation analysis, were:
+
+**LST vs. Income:** The Pearson Correlation between Mean LST and Median Household Income was $-0.102$.
+
+**NDVI vs. Income:** The Pearson Correlation between Mean NDVI and Median Household Income was $0.166$.
+
+The scatterplots visually confirmed these relationships, suggesting that tracts with lower income generally experience higher mean LST. Conversely, areas with higher income tend to have greater mean NDVI. This finding supports the hypothesis that a lack of vegetation cover, often found in lower-income areas, contributes to increased thermal exposure and the urban heat island effect.
+
+## Limitations & Future considerations
+
+While the project offers key insights for environmental policy regarding Surface Urban Heat Islands, there are limitations at the current stage of this process:
+
+**Temporal Limitation:** The analysis relies on a single Landsat 9 scene captured on a specific date (July 07, 2025). This provides a snapshot of the Surface Urban Heat Island (SUHI) effect and Land Surface Temperature (LST) for that particular day but fails to show temporal variability seen in season changes or long term weather fluctuations.
+
+To improve this, future iterations could examine long term time cycles such as, 12 month cycles, to gain an understanding of annual trends.
+
+**Socioeconomic limitation:** The correlation analysis is primarily limited to Median Household Income as the sole socioeconomic indicator. Income alone is not a comprehensive measure of neighborhood vulnerability.
+
+To improve this, other socioeconomic variables like racial demographics, age distribution, language barriers, access to healthcare, and housing quality can contribute to heat vulnerability.
 
 # Conclusions
 
-\[\~200 words\]
+This analysis successfully utilized Landsat 9 imagery and geospatial processing techniques to quantify Land Surface Temperature (LST) and vegetation cover (NDVI) at the Census tract level for Rochester, NY.
 
-Clear summary adequately describing the results and putting them in context. Discussion of further questions and ways to continue investigation.
+The key finding is the clear presence of a Surface Urban Heat Island (SUHI) effect, spatially concentrated in the densely built environment. This thermal heterogeneity suggests a realtionship with a lack of vegetation cover, and the integration of these surface metrics with socio-economic data reveals that high thermal exposure may disproportionately impact tracts characterized by lower median household income.
+
+The results provide actionable data for urban planning initiatives aimed at mitigating the SUHI effect through targeted green infrastructure development in the most vulnerable tracts. Future research could expand on this work by incorporating additional Landsat scenes across different seasons to model seasonal LST variance and developing a more comprehensive vulnerability index by integrating LST with public health data.
 
 # References
 
-All sources are cited in a consistent manner
+**U.S. Census Bureau.** (2025). *American Community Survey 5-Year Estimates, Table B19013: Median Household Income* \[Dataset\]. U.S. Department of Commerce. Accessed via the `tidycensus` R package. Retrieved from https://www.census.gov/programs-surveys/acs
+
+**U.S. Geological Survey, Earth Resources Observation and Science (EROS) Center.** (2020). *Landsat 8-9 Operational Land Imager / Thermal Infrared Sensor Level-2, Collection 2* \[Dataset\]. U.S. Geological Survey. Retrieved from https://earthexplorer.usgs.gov/
