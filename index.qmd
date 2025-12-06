@@ -12,26 +12,23 @@ format:
 
 # Introduction
 
-The Urban Heat Island (UHI) effect is a global phenomenon in which urban areas experience significantly higher Land Surface Temperatures (LST) than their surrounding rural counterparts. This temperature disparity is caused primarily by the dense concentration of buildings, roads, and other impervious surfaces that absorb and retain heat, along with a decrease of vegetation and green spaces that would otherwise provide natural cooling, reduced by urban expansion.
+The Urban Heat Island (UHI) effect is a global phenomenon in which urban areas experience significantly higher Land Surface Temperatures (LST) than their surrounding rural counterparts. This temperature disparity is caused primarily by the dense concentration of buildings, roads, and other impervious surfaces that absorb and retain heat, along with a decrease of vegetation and green spaces that would otherwise provide natural cooling, reduced by urban expansion \[1\].
 
 In cities like Rochester, New York, heat patterns do not impact all communities equally. Variations in land use, socio-economic conditions, and access to vegetation can create localized “hot spots” that exacerbate health and environmental inequities. Prolonged exposure to elevated temperatures can increase energy demands, worsen air quality, and put vulnerable populations at risk. This project seeks to examine the relationship between socio-economic and land-use patterns and disparities in heat exposure across Rochester.
 
-To accurately quantify the role of green space in mediating the Urban Heat Island effect, this project utilizes the Normalized Difference Vegetation Index (NDVI). NDVI is a critical remote sensing metric that measures the health and density of green vegetation . This index is calculated from the Near-Infrared (NIR) and Red light bands of the Landsat 9 imagery. Healthy vegetation strongly reflects NIR light and absorbs Red light, resulting in high positive NDVI values (close to +1), while impervious surfaces (like roads and buildings) have low or negative values.
+To accurately quantify the role of green space in mediating the Urban Heat Island effect, this project utilizes the Normalized Difference Vegetation Index (NDVI). NDVI is a critical remote sensing metric that measures the health and density of green vegetation . This index is calculated from the Near-Infrared (NIR) and Red light bands of the Landsat 9 imagery. Healthy vegetation strongly reflects NIR light and absorbs Red light, resulting in high positive NDVI values (close to +1), while impervious surfaces (like roads and buildings) have low or negative values \[3\].
 
 Specifically, it aims to explore how differences in vegetative cover mediate these temperature variations and whether neighborhoods with lower income or less green space experience greater heat stress. By analyzing spatial data on LST, land use, and vegetation distribution, this study will shed light on the socio-environmental dynamics of urban heat and contribute to more equitable strategies for climate resilience.
 
-# Materials and methods
+# Study Area and Data Acquisition
 
-### **Study Area and Data Acquisition**
+The study area was defined by the **Census tracts of Rochester, Monroe County, New York (NY)**, acquired using the `tidycensus` R package. This vector boundary file was re-projected to match the Coordinate Reference System (CRS) of the Landsat imagery. The raw remote sensing data was obtained from a **Landsat 9 Level-1 scene (Path 016, Row 030)**, captured on **July 07, 2025**. The analysis utilized Band 4 (Red) and Band 5 (Near-Infrared, NIR) for the calculation of the Normalized Difference Vegetation Index (NDVI), and Band 10 (Thermal Infrared, TIRS) for the calculation of Land Surface Temperature (LST) as well as the Metadata text file containing constants for TIRS band needed for LST calculation \[5\].
 
-The study area was defined by the **Census tracts of Rochester, Monroe County, New York (NY)**, acquired using the `tidycensus` R package. This vector boundary file was re-projected to match the Coordinate Reference System (CRS) of the Landsat imagery. The raw remote sensing data was obtained from a **Landsat 9 Level-1 scene (Path 016, Row 030)**, captured on **July 07, 2025**. The analysis utilized Band 4 (Red) and Band 5 (Near-Infrared, NIR) for the calculation of the Normalized Difference Vegetation Index (NDVI), and Band 10 (Thermal Infrared, TIRS) for the calculation of Land Surface Temperature (LST) as well as the Metadata text file containing constants for TIRS band needed for LST calculation.
+## Data Import & Cleanup
 
-## 1 Data Import & Cleanup
-
-### 1.1 Load Libraries
+### Load Libraries
 
 ```{r load-libraries,message=FALSE,warning=FALSE,echo=TRUE}
-library(tidyverse) 
 library(leaflet) #interactive map
 library(kableExtra) #tabulating
 library(htmlwidgets) #leaflet
@@ -44,10 +41,11 @@ library(terra) #raster operations
 library(dplyr) #data manipulation
 library(purrr) # map()
 library(scales) #$ sign for leaflet
+#removed libraries not used
 knitr::opts_chunk$set(widgetframe_widgets_dir = 'widgets' ) 
 ```
 
-### 1.2 Import Census Data
+### Import Census Data
 
 ```{r census-api, output=FALSE, echo=TRUE, cache=TRUE}
 #Pull census data with API key
@@ -56,9 +54,9 @@ census_api_key("a7f41abd86b507f92feb140131bdcbd24b0d9170", install = TRUE, overw
 readRenviron("~/.Renviron")  
 ```
 
-### 1.3 Census Data Cleanup
+### Census Data Cleanup
 
-Before analyzing environmental factors, the study area must be defined and socioeconomic data needs to be acquired. This section uses the `tidycensus` package to pull the **5-year ACS estimates** for Median Household Income at the census tract level for Monroe County, NY. Then this spatial dataset is redefined using `tigris` and `sf` to include only those tracts within the official City of Rochester boundary using the `st_within` function.
+Before analyzing environmental factors, the study area must be defined and socioeconomic data needs to be acquired. This section uses the `tidycensus` package to pull the **5-year ACS estimates** for Median Household Income at the census tract level \[4\] for Monroe County, NY. Then this spatial dataset is redefined using `tigris` and `sf` to include only those tracts within the official City of Rochester boundary using the `st_within` function.
 
 ```{r census-clean, output=FALSE, warning= FALSE, cache =TRUE}
 #Census data cleanup
@@ -77,7 +75,7 @@ rochester_city <- places(state = "NY", cb = TRUE) %>% #tigris places command get
 tracts_rochester <- tracts_monroe[st_within(tracts_monroe, rochester_city, sparse = FALSE), ] #removes tracts not within
 ```
 
-### 1.4 Import Landsat data
+### Import Landsat data
 
 This section prepares the raw Landsat 9 OLI/TIRS data for analysis. The L1TP Thermal (Band 10), Red (Band 4), and Near-Infrared (Band 5) bands are imported. All raster bands were first projected into a common CRS, **UTM Zone 18N (WGS84)**, consistent with the standard Level-1 product projection. To isolate the study, the complete Landsat scene was first **cropped** to the boundary of the city of Rochester and **masked** using the `terra::crop()` and `terra::mask()` functions, respectively.
 
@@ -105,7 +103,7 @@ b10_crop <- crop(b10_remote, rochester_prj) %>% mask(rochester_prj)
 Two key surface metrics were calculated for the study area:
 
 1.  **Normalized Difference Vegetation Index (NDVI):** A proxy for surface vegetation cover, calculated using the values from the Red and NIR bands. Healthy vegetation strongly reflects NIR light and absorbs Red light, resulting in high positive NDVI values (close to +1), while impervious surfaces (like roads and buildings) have low or negative values.
-2.  **Land Surface Temperature (LST):** A proxy for the surface urban heat island effect, derived from the Thermal Infrared Band 10. The process involved three steps: conversion of Digital Numbers (DN) to TOA Radiance, conversion to Brightness Temperature in Kelvin, and finally converted to Celsius, using sensor-specific constants from the MTL file.
+2.  **Land Surface Temperature (LST):** A proxy for the surface urban heat island effect, derived from the Thermal Infrared Band 10. The process involved three steps: conversion of Digital Numbers (DN) to TOA Radiance, conversion to Brightness Temperature in Kelvin, and finally converted to Celsius, using sensor-specific constants from the MTL file \[2\].
 
 ### Land Surface Analysis: NDVI
 
@@ -419,6 +417,12 @@ The results provide actionable data for urban planning initiatives aimed at miti
 
 # References
 
-**U.S. Census Bureau.** (2025). *American Community Survey 5-Year Estimates, Table B19013: Median Household Income* \[Dataset\]. U.S. Department of Commerce. Accessed via the `tidycensus` R package. Retrieved from https://www.census.gov/programs-surveys/acs
+\[1\] “Heat Island Effect.” EPA, Environmental Protection Agency, www.epa.gov/heatislands. Accessed 5 Dec. 2025.
 
-**U.S. Geological Survey, Earth Resources Observation and Science (EROS) Center.** (2020). *Landsat 8-9 Operational Land Imager / Thermal Infrared Sensor Level-2, Collection 2* \[Dataset\]. U.S. Geological Survey. Retrieved from https://earthexplorer.usgs.gov/
+\[2\] “Landsat Surface Temperature.” USGS, www.usgs.gov/landsat-missions/landsat-surface-temperature. Accessed 5 Dec. 2025.
+
+\[3\] NDVI, the Foundation for Remote Sensing Phenology.” USGS, www.usgs.gov/special-topics/remote-sensing-phenology/science/ndvi-foundation-remote-sensing-phenology. Accessed 5 Dec. 2025.
+
+\[4\] U.S. Census Bureau. (2025). American Community Survey 5-Year Estimates, Table B19013: Median Household Income. U.S. Department of Commerce. Accessed via the `tidycensus` R package. Retrieved from https://www.census.gov/programs-surveys/acs
+
+\[5\] U.S. Geological Survey, Earth Resources Observation and Science (EROS) Center. (2020). Landsat 8-9 Operational Land Imager / Thermal Infrared Sensor Level-2, Collection 2 LC08_L1TP_016030_20250702_20250711_02_T1. U.S. Geological Survey. Retrieved from https://earthexplorer.usgs.gov/
