@@ -29,6 +29,7 @@ The study area was defined by the **Census tracts of Rochester, Monroe County, N
 ### Load Libraries
 
 ```{r load-libraries,message=FALSE,warning=FALSE,echo=TRUE}
+install.packages("textshaping")
 library(leaflet) #interactive map
 library(kableExtra) #tabulating
 library(htmlwidgets) #leaflet
